@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle de Gastos</title>
+<style>
+  :root{
+    --bg:#0f1720;--panel:#182430;--panel-2:#1f2e3d;--line:#2b3d4f;
+    --txt:#e8eef4;--muted:#8ba0b3;--green:#2ecc71;--red:#e74c3c;
+    --accent:#3d9be9;--gold:#e2b93b;--edit:#e2b93b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;
+    background:radial-gradient(circle at 20% 0%,#1b2a38 0%,#0f1720 55%);
+    color:var(--txt);min-height:100vh;padding:24px 16px 60px;
+  }
+  .wrap{max-width:1100px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:22px}
+  h1{font-size:1.5rem;font-weight:700;letter-spacing:.3px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--muted);font-size:.85rem;margin-top:2px}
+  .status{font-size:.75rem;padding:4px 10px;border-radius:20px;background:rgba(61,155,233,.12);color:var(--accent);border:1px solid rgba(61,155,233,.25)}
+  .status.ok{background:rgba(46,204,113,.12);color:var(--green);border-color:rgba(46,204,113,.25)}
+  .status.err{background:rgba(231,76,60,.12);color:var(--red);border-color:rgba(231,76,60,.25)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:22px}
+  .card{background:linear-gradient(160deg,var(--panel-2),var(--panel));border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card .lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.9px;color:var(--muted)}
+  .card .val{font-size:1.45rem;font-weight:700;margin-top:6px;font-variant-numeric:tabular-nums}
+  .card .val.pos{color:var(--green)}
+  .card .val.neg{color:var(--red)}
+  .card .val.acu{color:var(--gold)}
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:20px}
+  .toolbar input,.toolbar select{background:var(--panel-2);border:1px solid var(--line);color:var(--txt);padding:9px 11px;border-radius:8px;font-size:.88rem;outline:none}
+  .toolbar input:focus,.toolbar select:focus{border-color:var(--accent)}
+  .toolbar input[type="text"]{flex:1;min-width:160px}
+  button{cursor:pointer;border:none;border-radius:8px;padding:9px 16px;font-size:.88rem;font-weight:600;transition:.15s}
+  .btn-add{background:var(--accent);color:#fff}
+  .btn-add:hover{background:#3186c9}
+  .btn-clear{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  .btn-clear:hover{color:var(--red);border-color:var(--red)}
+  .btn-mini{background:transparent;color:var(--muted);border:1px solid var(--line);padding:4px 9px;font-size:.75rem;border-radius:6px}
+  .btn-mini:hover{color:var(--accent);border-color:var(--accent)}
+  .btn-mini.del:hover{color:var(--red);border-color:var(--red)}
+  .btn-mini.save{color:var(--green);border-color:var(--green)}
+  .btn-mini.save:hover{background:rgba(46,204,113,.15)}
+  table{width:100%;border-collapse:collapse;font-size:.88rem}
+  thead th{text-align:left;padding:10px 12px;color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--line)}
+  tbody td{padding:9px 12px;border-bottom:1px solid rgba(43,61,79,.5);vertical-align:middle}
+  tbody tr:hover{background:rgba(61,155,233,.05)}
+  tbody tr.editando{background:rgba(226,185,59,.07)}
+  tbody tr.editando td{border-bottom-color:rgba(226,185,59,.25)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  td.num.out{color:var(--red)}
+  td.num.in{color:var(--green)}
+  td.acoes{text-align:right;white-space:nowrap}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.72rem;font-weight:600;background:rgba(61,155,233,.15);color:var(--accent)}
+  .tag.receita{background:rgba(46,204,113,.15);color:var(--green)}
+  .tabela-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;overflow-x:auto}
+  .empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:.9rem}
+  .form-linha{display:flex;flex-wrap:wrap;gap:10px;width:100%}
+  .form-linha > *{flex:1;min-width:130px}
+  .form-linha .c-tipo,.form-linha .c-data{flex:0 0 150px}
+  footer{text-align:center;color:var(--muted);font-size:.75rem;margin-top:30px}
+  .inp-edit{width:100%;background:var(--bg);border:1px solid var(--edit);color:var(--txt);padding:6px 8px;border-radius:6px;font-size:.85rem;outline:none;font-family:inherit}
+  .inp-edit:focus{box-shadow:0 0 0 2px rgba(226,185,59,.25)}
+  .inp-edit.num-in{text-align:right}
+  @media(max-width:720px){
+    .form-linha .c-tipo,.form-linha .c-data{flex:1 1 100%}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Controle de <span>Gastos</span></h1>
+      <div class="sub">Banco de dados local (IndexedDB) — lançamentos editáveis</div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span class="status" id="statusDB">iniciando...</span>
+      <button class="btn-clear" onclick="limparTudo()">Limpar tudo</button>
+    </div>
+  </header>
+
+  <div class="cards">
+    <div class="card"><div class="lbl">Saldo</div><div class="val" id="kpiSaldo">R$ 0,00</div></div>
+    <div class="card"><div class="lbl">Receitas</div><div class="val pos" id="kpiReceita">R$ 0,00</div></div>
+    <div class="card"><div class="lbl">Despesas</div><div class="val neg" id="kpiDespesa">R$ 0,00</div></div>
+    <div class="card"><div class="lbl">Lançamentos</div><div class="val acu" id="kpiQtd">0</div></div>
+  </div>
+
+  <div class="toolbar">
+    <form class="form-linha" id="formLanc" onsubmit="adicionar(event)">
+      <input type="text" id="fDesc" placeholder="Descrição do lançamento" required>
+      <input type="number" id="fValor" placeholder="Valor (R$)" step="0.01" min="0.01" required>
+      <select id="fTipo" class="c-tipo">
+        <option value="despesa">Despesa</option>
+        <option value="receita">Receita</option>
+      </select>
+      <select id="fCat"></select>
+      <input type="date" id="fData" class="c-data" required>
+      <button type="submit" class="btn-add">+ Lançar</button>
+    </form>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="busca" placeholder="Buscar descrição..." oninput="renderizar()">
+    <select id="filtroTipo" onchange="renderizar()">
+      <option value="">Todos os tipos</option>
+      <option value="receita">Só receitas</option>
+      <option value="despesa">Só despesas</option>
+    </select>
+    <select id="filtroMes" onchange="renderizar()">
+      <option value="">Todos os meses</option>
+    </select>
+    <button class="btn-clear" onclick="exportarCSV()">Exportar CSV</button>
+  </div>
+
+  <div class="tabela-box">
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th><th>Descrição</th><th>Categoria</th><th>Tipo</th>
+          <th style="text-align:right">Valor</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="corpoTabela"></tbody>
+    </table>
+    <div class="empty" id="vazio" style="display:none">Nenhum lançamento encontrado.</div>
+  </div>
+
+  <footer>Módulo Financeiro — IndexedDB · dados locais no navegador</footer>
+</div>
+
+<script>
+const CATEGORIAS = {
+  despesa: ['Alimentação','Moradia','Transporte','Saúde','Educação','Lazer','Contas','Outros'],
+  receita: ['Salário','Freelance','Investimentos','Vendas','Outros']
+};
+
+const DB_NOME = 'controle_gastos_db';
+const DB_VERSAO = 1;
+const STORE = 'lancamentos';
+
+let db = null;
+let lancamentos = [];
+let editandoId = null;
+
+// ---------- Camada de banco (IndexedDB) ----------
+function abrirDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NOME, DB_VERSAO);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if(!d.objectStoreNames.contains(STORE)){
+        const store = d.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+        store.createIndex('data', 'data', { unique: false });
+        store.createIndex('tipo', 'tipo', { unique: false });
+        store.createIndex('categoria', 'categoria', { unique: false });
+      }
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+function tx(modo){ return db.transaction(STORE, modo).objectStore(STORE); }
+
+function dbInserir(obj){
+  return new Promise((resolve, reject) => {
+    const req = tx('readwrite').add(obj);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function dbAtualizar(obj){
+  return new Promise((resolve, reject) => {
+    const req = tx('readwrite').put(obj);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function dbListar(){
+  return new Promise((resolve, reject) => {
+    const req = tx('readonly').getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+function dbExcluir(id){
+  return new Promise((resolve, reject) => {
+    const req = tx('readwrite').delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+function dbLimpar(){
+  return new Promise((resolve, reject) => {
+    const req = tx('readwrite').clear();
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function sincronizar(){
+  lancamentos = await dbListar();
+  renderizar();
+}
+
+// ---------- Helpers ----------
+function fmt(v){ return v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function dataBR(iso){ const [a,m,d] = iso.split('-'); return `${d}/${m}/${a}`; }
+function opcoesCat(tipo, selecionada){
+  return CATEGORIAS[tipo].map(c =>
+    `<option value="${c}" ${c === selecionada ? 'selected' : ''}>${c}</option>`
+  ).join('');
+}
+
+// ---------- Formulário de inclusão ----------
+function atualizarCategorias(){
+  const tipo = document.getElementById('fTipo').value;
+  document.getElementById('fCat').innerHTML = opcoesCat(tipo);
+}
+document.getElementById('fTipo').addEventListener('change', atualizarCategorias);
+atualizarCategorias();
+document.getElementById('fData').value = new Date().toISOString().slice(0,10);
+
+async function adicionar(e){
+  e.preventDefault();
+  const desc = document.getElementById('fDesc').value.trim();
+  const valor = parseFloat(document.getElementById('fValor').value);
+  const tipo = document.getElementById('fTipo').value;
+  const categoria = document.getElementById('fCat').value;
+  const data = document.getElementById('fData').value;
+  if(!desc || !(valor > 0) || !data) return;
+
+  await dbInserir({ desc, valor, tipo, categoria, data, criadoEm: Date.now() });
+  document.getElementById('formLanc').reset();
+  document.getElementById('fData').value = new Date().toISOString().slice(0,10);
+  atualizarCategorias();
+  await sincronizar();
+}
+
+// ---------- Edição inline ----------
+function iniciarEdicao(id){
+  editandoId = id;
+  renderizar();
+  const primeiro = document.querySelector('tr.editando .inp-edit');
+  if(primeiro) primeiro.focus();
+}
+
+function cancelarEdicao(){
+  editandoId = null;
+  renderizar();
+}
+
+function categoriaDoTipo(tipoAtual, catAtual){
+  return CATEGORIAS[tipoAtual].includes(catAtual) ? catAtual : CATEGORIAS[tipoAtual][0];
+}
+
+async function salvarEdicao(id){
+  const tr = document.querySelector(`tr[data-id="${id}"]`);
+  if(!tr) return;
+
+  const desc = tr.querySelector('.ed-desc').value.trim();
+  const valor = parseFloat(tr.querySelector('.ed-valor').value);
+  const tipo = tr.querySelector('.ed-tipo').value;
+  const categoria = tr.querySelector('.ed-cat').value;
+  const data = tr.querySelector('.ed-data').value;
+
+  if(!desc || !(valor > 0) || !data) {
+    alert('Preencha descrição, valor e data corretamente.');
+    return;
+  }
+
+  const original = lancamentos.find(l => l.id === id);
+  if(!original) return;
+
+  await dbAtualizar({
+    ...original,
+    desc, valor, tipo, categoria, data,
+    atualizadoEm: Date.now()
+  });
+
+  editandoId = null;
+  await sincronizar();
+}
+
+// ---------- Exclusão / Limpeza ----------
+async function excluir(id){
+  if(!confirm('Excluir este lançamento?')) return;
+  await dbExcluir(id);
+  await sincronizar();
+}
+
+async function limparTudo(){
+  if(confirm('Apagar todos os lançamentos do banco? Essa ação não pode ser desfeita.')){
+    await dbLimpar();
+    editandoId = null;
+    await sincronizar();
+  }
+}
+
+// ---------- Render ----------
+function preencherMeses(){
+  const meses = [...new Set(lancamentos.map(l => l.data.slice(0,7)))].sort().reverse();
+  const sel = document.getElementById('filtroMes');
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os meses</option>' +
+    meses.map(m => {
+      const [a,mm] = m.split('-');
+      const nome = new Date(a, mm-1, 1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+      return `<option value="${m}">${nome.charAt(0).toUpperCase()+nome.slice(1)}</option>`;
+    }).join('');
+  sel.value = atual;
+}
+
+function linhaEdicao(l){
+  const catSel = categoriaDoTipo(l.tipo, l.categoria);
+  return `
+    <tr class="editando" data-id="${l.id}">
+      <td><input type="date" class="inp-edit ed-data" value="${l.data}"></td>
+      <td><input type="text" class="inp-edit ed-desc" value="${l.desc.replace(/"/g,'&quot;')}"></td>
+      <td>
+        <select class="inp-edit ed-cat" data-id="${l.id}">${opcoesCat(l.tipo, catSel)}</select>
+      </td>
+      <td>
+        <select class="inp-edit ed-tipo" data-id="${l.id}">
+          <option value="despesa" ${l.tipo==='despesa'?'selected':''}>Despesa</option>
+          <option value="receita" ${l.tipo==='receita'?'selected':''}>Receita</option>
+        </select>
+      </td>
+      <td><input type="number" step="0.01" min="0.01" class="inp-edit num-in ed-valor" value="${l.valor}"></td>
+      <td class="acoes">
+        <button class="btn-mini save" onclick="salvarEdicao(${l.id})">salvar</button>
+        <button class="btn-mini" onclick="cancelarEdicao()">cancelar</button>
+      </td>
+    </tr>`;
+}
+
+function linhaLeitura(l){
+  return `
+    <tr data-id="${l.id}">
+      <td>${dataBR(l.data)}</td>
+      <td>${l.desc}</td>
+      <td><span class="tag">${l.categoria}</span></td>
+      <td><span class="tag ${l.tipo === 'receita' ? 'receita' : ''}">${l.tipo === 'receita' ? 'Receita' : 'Despesa'}</span></td>
+      <td class="num ${l.tipo === 'receita' ? 'in' : 'out'}">${l.tipo === 'receita' ? '+' : '-'} ${fmt(l.valor)}</td>
+      <td class="acoes">
+        <button class="btn-mini" onclick="iniciarEdicao(${l.id})">editar</button>
+        <button class="btn-mini del" onclick="excluir(${l.id})">excluir</button>
+      </td>
+    </tr>`;
+}
+
+function renderizar(){
+  preencherMeses();
+
+  const busca = document.getElementById('busca').value.toLowerCase();
+  const ftipo = document.getElementById('filtroTipo').value;
+  const fmes = document.getElementById('filtroMes').value;
+
+  const lista = lancamentos.slice().sort((a,b) => b.data.localeCompare(a.data));
+
+  const filtrados = lista.filter(l =>
+    (!ftipo || l.tipo === ftipo) &&
+    (!fmes || l.data.startsWith(fmes)) &&
+    (!busca || l.desc.toLowerCase().includes(busca) || l.categoria.toLowerCase().includes(busca))
+  );
+
+  const corpo = document.getElementById('corpoTabela');
+  const vazio = document.getElementById('vazio');
+
+  if(filtrados.length === 0){
+    corpo.innerHTML = '';
+    vazio.style.display = 'block';
+  }else{
+    vazio.style.display = 'none';
+    corpo.innerHTML = filtrados.map(l =>
+      l.id === editandoId ? linhaEdicao(l) : linhaLeitura(l)
+    ).join('');
+
+    // troca de tipo dentro da edição recarrega as categorias daquela linha
+    document.querySelectorAll('.ed-tipo').forEach(sel => {
+      sel.addEventListener('change', ev => {
+        const tr = ev.target.closest('tr');
+        const catSel = tr.querySelector('.ed-cat');
+        catSel.innerHTML = opcoesCat(ev.target.value);
+      });
+    });
+
+    // Enter salva, Esc cancela
+    document.querySelectorAll('tr.editando .inp-edit').forEach(inp => {
+      inp.addEventListener('keydown', ev => {
+        const id = Number(ev.target.closest('tr').dataset.id);
+        if(ev.key === 'Enter'){ ev.preventDefault(); salvarEdicao(id); }
+        if(ev.key === 'Escape'){ ev.preventDefault(); cancelarEdicao(); }
+      });
+    });
+  }
+
+  const base = fmes ? lancamentos.filter(l => l.data.startsWith(fmes)) : lancamentos;
+  const receita = base.filter(l => l.tipo === 'receita').reduce((s,l) => s + l.valor, 0);
+  const despesa = base.filter(l => l.tipo === 'despesa').reduce((s,l) => s + l.valor, 0);
+  const saldo = receita - despesa;
+
+  const elSaldo = document.getElementById('kpiSaldo');
+  elSaldo.textContent = fmt(saldo);
+  elSaldo.className = 'val ' + (saldo >= 0 ? 'pos' : 'neg');
+  document.getElementById('kpiReceita').textContent = fmt(receita);
+  document.getElementById('kpiDespesa').textContent = fmt(despesa);
+  document.getElementById('kpiQtd').textContent = base.length;
+}
+
+// ---------- Export ----------
+function exportarCSV(){
+  const linhas = [['Data','Descrição','Categoria','Tipo','Valor']];
+  lancamentos.slice().sort((a,b) => a.data.localeCompare(b.data)).forEach(l => {
+    linhas.push([l.data, l.desc, l.categoria, l.tipo, l.valor.toFixed(2).replace('.',',')]);
+  });
+  const csv = '\uFEFF' + linhas.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `gastos-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- Bootstrap ----------
+(async function init(){
+  const statusEl = document.getElementById('statusDB');
+  try{
+    if(!('indexedDB' in window)) throw new Error('IndexedDB não suportado');
+    db = await abrirDB();
+    statusEl.textContent = 'banco conectado';
+    statusEl.classList.add('ok');
+    await sincronizar();
+  }catch(err){
+    statusEl.textContent = 'banco indisponível';
+    statusEl.classList.add('err');
+    console.error(err);
+  }
+})();
+</script>
+</body>
+</html>
