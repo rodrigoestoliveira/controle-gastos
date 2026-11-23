@@ -40,6 +40,8 @@
   .btn-add:hover{background:#3186c9}
   .btn-clear{background:transparent;color:var(--muted);border:1px solid var(--line)}
   .btn-clear:hover{color:var(--red);border-color:var(--red)}
+  .btn-imp{background:transparent;color:var(--green);border:1px solid var(--green)}
+  .btn-imp:hover{background:rgba(46,204,113,.12)}
   .btn-mini{background:transparent;color:var(--muted);border:1px solid var(--line);padding:4px 9px;font-size:.75rem;border-radius:6px}
   .btn-mini:hover{color:var(--accent);border-color:var(--accent)}
   .btn-mini.del:hover{color:var(--red);border-color:var(--red)}
@@ -66,6 +68,10 @@
   .inp-edit{width:100%;background:var(--bg);border:1px solid var(--edit);color:var(--txt);padding:6px 8px;border-radius:6px;font-size:.85rem;outline:none;font-family:inherit}
   .inp-edit:focus{box-shadow:0 0 0 2px rgba(226,185,59,.25)}
   .inp-edit.num-in{text-align:right}
+  .aviso{padding:10px 14px;border-radius:8px;font-size:.82rem;margin-bottom:14px;display:none}
+  .aviso.ok{display:block;background:rgba(46,204,113,.1);border:1px solid rgba(46,204,113,.3);color:var(--green)}
+  .aviso.err{display:block;background:rgba(231,76,60,.1);border:1px solid rgba(231,76,60,.3);color:var(--red)}
+  .aviso ul{margin:6px 0 0 18px}
   @media(max-width:720px){
     .form-linha .c-tipo,.form-linha .c-data{flex:1 1 100%}
   }
@@ -116,7 +122,11 @@
       <option value="">Todos os meses</option>
     </select>
     <button class="btn-clear" onclick="exportarCSV()">Exportar CSV</button>
+    <button class="btn-imp" onclick="document.getElementById('inputCSV').click()">Importar CSV</button>
+    <input type="file" id="inputCSV" accept=".csv,text/csv" style="display:none" onchange="importarCSV(event)">
   </div>
+
+  <div class="aviso" id="avisoImport"></div>
 
   <div class="tabela-box">
     <table>
@@ -174,6 +184,15 @@ function dbInserir(obj){
     req.onerror = () => reject(req.error);
   });
 }
+function dbInserirLote(lista){
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(STORE, 'readwrite');
+    const store = t.objectStore(STORE);
+    lista.forEach(obj => store.add(obj));
+    t.oncomplete = () => resolve(lista.length);
+    t.onerror = e => reject(e.target.error);
+  });
+}
 function dbAtualizar(obj){
   return new Promise((resolve, reject) => {
     const req = tx('readwrite').put(obj);
@@ -216,6 +235,189 @@ function opcoesCat(tipo, selecionada){
     `<option value="${c}" ${c === selecionada ? 'selected' : ''}>${c}</option>`
   ).join('');
 }
+function normalizarTexto(s){
+  return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+}
+function normalizarTipo(s){
+  const t = normalizarTexto(s);
+  if(t.startsWith('receit') || t === 'r' || t === 'entrada' || t === 'credito') return 'receita';
+  if(t.startsWith('despes') || t === 'd' || t === 'saida' || t === 'debito') return 'despesa';
+  return null;
+}
+function normalizarValor(s){
+  let v = String(s).replace(/[R$\s]/gi,'').trim();
+  if(v.includes(',') && v.includes('.')){
+    v = v.replace(/\./g,'').replace(',','.');
+  }else if(v.includes(',')){
+    v = v.replace(',','.');
+  }
+  const n = parseFloat(v);
+  return isNaN(n) ? null : Math.abs(n);
+}
+function normalizarData(s){
+  const v = String(s).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  let m = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if(m){
+    let [_,d,mes,ano] = m;
+    if(ano.length === 2) ano = '20' + ano;
+    return `${ano.padStart(4,'0')}-${mes.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  const dt = new Date(v);
+  if(!isNaN(dt)) return dt.toISOString().slice(0,10);
+  return null;
+}
+function acharCategoria(tipo, cat){
+  const lista = CATEGORIAS[tipo];
+  const alvo = normalizarTexto(cat);
+  const achou = lista.find(c => normalizarTexto(c) === alvo);
+  if(achou) return achou;
+  const parcial = lista.find(c => normalizarTexto(c).includes(alvo) || alvo.includes(normalizarTexto(c)));
+  return parcial || 'Outros';
+}
+
+// ---------- Parser CSV ----------
+function parseCSV(texto){
+  const semBOM = textoreplace = texto.charCodeAt(0) === 0xFEFF ? texto.slice(1) : texto;
+  const linhas = [];
+  let campo = '', linha = [], dentroAspas = false;
+
+  for(let i = 0; i < semBOM.length; i++){
+    const ch = semBOM[i];
+    const prox = semBOM[i+1];
+
+    if(dentroAspas){
+      if(ch === '"' && prox === '"'){ campo += '"'; i++; }
+      else if(ch === '"'){ dentroAspas = false; }
+      else { campo += ch; }
+    }else{
+      if(ch === '"'){ dentroAspas = true; }
+      else if(ch === ';' || ch === ','){ linha.push(campo); campo = ''; }
+      else if(ch === '\r'){ /* ignora */ }
+      else if(ch === '\n'){ linha.push(campo); linhas.push(linha); linha = []; campo = ''; }
+      else { campo += ch; }
+    }
+  }
+  if(campo !== '' || linha.length){ linha.push(campo); linhas.push(linha); }
+  return linhas.filter(l => l.some(c => c.trim() !== ''));
+}
+
+function detectarDelimitador(texto){
+  const amostra = texto.slice(0, 2000);
+  const pv = (amostra.match(/;/g) || []).length;
+  const vg = (amostra.match(/,/g) || []).length;
+  return vg > pv ? ',' : ';';
+}
+
+// ---------- Importação ----------
+async function importarCSV(event){
+  const arquivo = event.target.files[0];
+  const aviso = document.getElementById('avisoImport');
+  aviso.className = 'aviso';
+  aviso.innerHTML = '';
+
+  if(!arquivo) return;
+
+  try{
+    let texto = await lerArquivo(arquivo);
+
+    if(arquivo.name.toLowerCase().endsWith('.xlsx') || arquivo.name.toLowerCase().endsWith('.xls')){
+      aviso.className = 'aviso err';
+      aviso.innerHTML = 'Arquivo Excel não é suportado diretamente. Abra no Excel → Salvar como → CSV, e importe o CSV.';
+      event.target.value = '';
+      return;
+    }
+
+    const delim = detectarDelimitador(texto);
+    if(delim === ','){
+      texto = texto.replace(/^\uFEFF/, '');
+    }
+    const linhas = parseCSV(texto);
+    if(linhas.length < 2){
+      aviso.className = 'aviso err';
+      aviso.innerHTML = 'O arquivo está vazio ou só tem cabeçalho.';
+      event.target.value = '';
+      return;
+    }
+
+    const cabecalho = linhas[0].map(c => normalizarTexto(c));
+    const idx = {
+      data: cabecalho.findIndex(c => c.includes('data')),
+      desc: cabecalho.findIndex(c => c.includes('descri') || c.includes('hist') || c.includes('lanc')),
+      cat: cabecalho.findIndex(c => c.includes('categ')),
+      tipo: cabecalho.findIndex(c => c.includes('tipo') || c.includes('natureza')),
+      valor: cabecalho.findIndex(c => c.includes('valor') || c.includes('montante') || c.includes('quantia'))
+    };
+
+    if(idx.data === -1 || idx.desc === -1 || idx.valor === -1){
+      aviso.className = 'aviso err';
+      aviso.innerHTML = 'Não reconheci as colunas. O CSV precisa ter pelo menos: <b>Data</b>, <b>Descrição</b> e <b>Valor</b>. Cabeçalhos aceitos: data, descrição/histórico, categoria, tipo/natureza, valor.';
+      event.target.value = '';
+      return;
+    }
+
+    const validos = [];
+    const rejeitados = [];
+    const erros = [];
+
+    for(let i = 1; i < linhas.length; i++){
+      const l = linhas[i];
+      const bruta = l.map(c => (c || '').trim());
+
+      const desc = idx.desc >= 0 ? bruta[idx.desc] : '';
+      const valor = idx.valor >= 0 ? normalizarValor(bruta[idx.valor]) : null;
+      const data = idx.data >= 0 ? normalizarData(bruta[idx.data]) : null;
+      let tipo = idx.tipo >= 0 ? normalizarTipo(bruta[idx.tipo]) : null;
+      let categoria = idx.cat >= 0 ? bruta[idx.cat] : '';
+
+      if(!desc || valor === null || valor <= 0 || !data){
+        rejeitados.push({ linha: i+1, motivo: !desc ? 'sem descrição' : !data ? 'data inválida' : 'valor inválido' });
+        continue;
+      }
+      if(!tipo){
+        const val = normalizarValor(bruta[idx.valor]);
+        tipo = valor >= 0 && bruta[idx.valor] && bruta[idx.valor].includes('-') ? 'despesa' : 'despesa';
+      }
+      categoria = acharCategoria(tipo, categoria);
+
+      validos.push({ desc, valor, tipo, categoria, data, criadoEm: Date.now() });
+    }
+
+    if(validos.length === 0){
+      aviso.className = 'aviso err';
+      aviso.innerHTML = 'Nenhuma linha válida para importar.' + (rejeitados.length ? ` ${rejeitados.length} linha(s) rejeitada(s).` : '');
+      event.target.value = '';
+      return;
+    }
+
+    const totalAntes = lancamentos.length;
+    await dbInserirLote(validos);
+    await sincronizar();
+
+    aviso.className = 'aviso ok';
+    aviso.innerHTML = `<b>${validos.length}</b> lançamento(s) importado(s) com sucesso.` +
+      (rejeitados.length ? `<br><b>${rejeitados.length}</b> linha(s) ignorada(s):<ul>` +
+        rejeitados.slice(0,5).map(r => `<li>Linha ${r.linha}: ${r.motivo}</li>`).join('') +
+        (rejeitados.length > 5 ? '<li>...</li>' : '') + '</ul>' : '') +
+      `<br><span style="color:var(--muted);font-size:.78rem">Antes: ${totalAntes} · Agora: ${lancamentos.length}</span>`;
+
+    event.target.value = '';
+  }catch(err){
+    aviso.className = 'aviso err';
+    aviso.innerHTML = 'Falha ao ler o arquivo: ' + (err.message || err);
+    event.target.value = '';
+    console.error(err);
+  }
+}
+
+function lerArquivo(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error('Erro de leitura'));
+    r.readAsText(file, 'UTF-8');
+  });
+}
 
 // ---------- Formulário de inclusão ----------
 function atualizarCategorias(){
@@ -249,40 +451,28 @@ function iniciarEdicao(id){
   const primeiro = document.querySelector('tr.editando .inp-edit');
   if(primeiro) primeiro.focus();
 }
-
 function cancelarEdicao(){
   editandoId = null;
   renderizar();
 }
-
 function categoriaDoTipo(tipoAtual, catAtual){
   return CATEGORIAS[tipoAtual].includes(catAtual) ? catAtual : CATEGORIAS[tipoAtual][0];
 }
-
 async function salvarEdicao(id){
   const tr = document.querySelector(`tr[data-id="${id}"]`);
   if(!tr) return;
-
   const desc = tr.querySelector('.ed-desc').value.trim();
   const valor = parseFloat(tr.querySelector('.ed-valor').value);
   const tipo = tr.querySelector('.ed-tipo').value;
   const categoria = tr.querySelector('.ed-cat').value;
   const data = tr.querySelector('.ed-data').value;
-
-  if(!desc || !(valor > 0) || !data) {
+  if(!desc || !(valor > 0) || !data){
     alert('Preencha descrição, valor e data corretamente.');
     return;
   }
-
   const original = lancamentos.find(l => l.id === id);
   if(!original) return;
-
-  await dbAtualizar({
-    ...original,
-    desc, valor, tipo, categoria, data,
-    atualizadoEm: Date.now()
-  });
-
+  await dbAtualizar({ ...original, desc, valor, tipo, categoria, data, atualizadoEm: Date.now() });
   editandoId = null;
   await sincronizar();
 }
@@ -293,7 +483,6 @@ async function excluir(id){
   await dbExcluir(id);
   await sincronizar();
 }
-
 async function limparTudo(){
   if(confirm('Apagar todos os lançamentos do banco? Essa ação não pode ser desfeita.')){
     await dbLimpar();
@@ -322,11 +511,9 @@ function linhaEdicao(l){
     <tr class="editando" data-id="${l.id}">
       <td><input type="date" class="inp-edit ed-data" value="${l.data}"></td>
       <td><input type="text" class="inp-edit ed-desc" value="${l.desc.replace(/"/g,'&quot;')}"></td>
+      <td><select class="inp-edit ed-cat">${opcoesCat(l.tipo, catSel)}</select></td>
       <td>
-        <select class="inp-edit ed-cat" data-id="${l.id}">${opcoesCat(l.tipo, catSel)}</select>
-      </td>
-      <td>
-        <select class="inp-edit ed-tipo" data-id="${l.id}">
+        <select class="inp-edit ed-tipo">
           <option value="despesa" ${l.tipo==='despesa'?'selected':''}>Despesa</option>
           <option value="receita" ${l.tipo==='receita'?'selected':''}>Receita</option>
         </select>
@@ -356,13 +543,11 @@ function linhaLeitura(l){
 
 function renderizar(){
   preencherMeses();
-
   const busca = document.getElementById('busca').value.toLowerCase();
   const ftipo = document.getElementById('filtroTipo').value;
   const fmes = document.getElementById('filtroMes').value;
 
   const lista = lancamentos.slice().sort((a,b) => b.data.localeCompare(a.data));
-
   const filtrados = lista.filter(l =>
     (!ftipo || l.tipo === ftipo) &&
     (!fmes || l.data.startsWith(fmes)) &&
@@ -381,16 +566,12 @@ function renderizar(){
       l.id === editandoId ? linhaEdicao(l) : linhaLeitura(l)
     ).join('');
 
-    // troca de tipo dentro da edição recarrega as categorias daquela linha
     document.querySelectorAll('.ed-tipo').forEach(sel => {
       sel.addEventListener('change', ev => {
         const tr = ev.target.closest('tr');
-        const catSel = tr.querySelector('.ed-cat');
-        catSel.innerHTML = opcoesCat(ev.target.value);
+        tr.querySelector('.ed-cat').innerHTML = opcoesCat(ev.target.value);
       });
     });
-
-    // Enter salva, Esc cancela
     document.querySelectorAll('tr.editando .inp-edit').forEach(inp => {
       inp.addEventListener('keydown', ev => {
         const id = Number(ev.target.closest('tr').dataset.id);
